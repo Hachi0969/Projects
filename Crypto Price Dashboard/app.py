@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 
 from binance.client import Client
 
-client = Client()
+client = Client("","")
 
 st.set_page_config(page_title="Crypto Price Dashboard", layout="wide")
 st.title("📊Crypto Price Dashboard")
