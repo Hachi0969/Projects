@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 import plotly.express as px
 import streamlit as st
 import requests
@@ -12,6 +11,35 @@ st.set_page_config(page_title="Crypto Price Dashboard", layout="wide")
 st.title("📊 Crypto Price Dashboard")
 
 # ---------------------------
+# Helper functions
+# ---------------------------
+def get_ticker(symbol: str):
+    """Fetch 24hr ticker stats from Binance public API."""
+    url = "https://api.binance.com/api/v3/ticker/24hr"
+    resp = requests.get(url, params={"symbol": symbol}).json()
+    if "symbol" in resp:
+        return resp
+    else:
+        return None
+
+def get_klines(symbol: str, interval: str, limit: int = 100):
+    """Fetch OHLCV candlestick data from Binance public API."""
+    url = "https://api.binance.com/api/v3/klines"
+    resp = requests.get(url, params={"symbol": symbol, "interval": interval, "limit": limit}).json()
+    if isinstance(resp, list):
+        return resp
+    else:
+        return None
+
+def get_cmc_data(symbol: str):
+    """Fetch market cap and supply data from CoinMarketCap."""
+    url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
+    params = {"symbol": symbol.replace("USDT", "")}
+    headers = {"X-CMC_PRO_API_KEY": "d79fa2cb-f6e4-4ada-87b4-12d093df4d0d"}  # replace with your key
+    resp = requests.get(url, headers=headers, params=params).json()
+    return resp.get("data", {}).get(symbol.replace("USDT", ""), None)
+
+# ---------------------------
 # Sidebar
 # ---------------------------
 st.sidebar.header("Please filter here")
@@ -19,22 +47,20 @@ symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT"]
 selected = st.sidebar.selectbox("Select a crypto pair", symbols)
 
 # ---------------------------
-# Binance public ticker endpoint
+# Fetch data safely
 # ---------------------------
-ticker_url = "https://api.binance.com/api/v3/ticker/24hr"
-ticker = requests.get(ticker_url, params={"symbol": selected}).json()
+ticker = get_ticker(selected)
+if ticker is None:
+    st.error("Could not fetch ticker data from Binance.")
+    st.stop()
+
+coin_data = get_cmc_data(selected)
+if coin_data is None:
+    st.error("Could not fetch data from CoinMarketCap.")
+    st.stop()
 
 # ---------------------------
-# CoinMarketCap data
-# ---------------------------
-cmc_url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
-params = {"symbol": selected.replace("USDT", "")}
-headers = {"X-CMC_PRO_API_KEY": "d79fa2cb-f6e4-4ada-87b4-12d093df4d0d"}  # replace with your own key
-data = requests.get(cmc_url, headers=headers, params=params).json()
-coin_data = data["data"][selected.replace("USDT", "")]
-
-# ---------------------------
-# Timeframe mapping for klines
+# Timeframe mapping
 # ---------------------------
 timeframe_dict = {
     "30 minutes": "30m",
@@ -52,7 +78,7 @@ timeframe_list = list(timeframe_dict.keys())
 # ---------------------------
 left_col, right_col = st.columns(2)
 with left_col:
-    st.metric(label="Coin Pair", value=f"{ticker['symbol']}")
+    st.metric(label="Coin Pair", value=ticker["symbol"])
 with right_col:
     st.metric(label="Current Price (USD)", value=f"{float(ticker['lastPrice']):,.2f} USD")
 
@@ -71,10 +97,12 @@ with right_col2:
 timeframe_selected = timeframe_dict[timeframe_selected_label]
 
 # ---------------------------
-# Binance klines (candlestick data)
+# Klines data
 # ---------------------------
-klines_url = "https://api.binance.com/api/v3/klines"
-klines = requests.get(klines_url, params={"symbol": selected, "interval": timeframe_selected, "limit": 100}).json()
+klines = get_klines(selected, timeframe_selected)
+if klines is None:
+    st.error("Could not fetch candlestick data from Binance.")
+    st.stop()
 
 df = pd.DataFrame(klines, columns=[
     "Open time", "Open", "High", "Low", "Close", "Volume",
@@ -116,14 +144,8 @@ chart_dict = {
     "Line Chart": fig_by_line_chart,
     "Candles Chart": fig_by_candle,
 }
-chart_list = list(chart_dict.keys())
-
 with left_col2:
-    chart_selected_label = st.selectbox(
-        "Select Chart Type",
-        options=chart_list,
-        index=0
-    )
+    chart_selected_label = st.selectbox("Select Chart Type", options=list(chart_dict.keys()), index=0)
 chart_selected = chart_dict[chart_selected_label]
 st.plotly_chart(chart_selected, use_container_width=True)
 
