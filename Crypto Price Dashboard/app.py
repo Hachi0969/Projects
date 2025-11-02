@@ -4,10 +4,15 @@ import plotly.express as px
 import streamlit as st
 import requests
 import plotly.graph_objects as go
+import os
 
 from binance.client import Client
 
-client = Client("","")
+api_key = os.environ.get("BINANCE_API_KEY", "")
+api_secret = os.environ.get("BINANCE_API_SECRET", "")
+
+client = Client(api_key, api_secret)
+
 
 st.set_page_config(page_title="Crypto Price Dashboard", layout="wide")
 st.title("📊Crypto Price Dashboard")
