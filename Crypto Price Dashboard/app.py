@@ -1,189 +1,108 @@
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 import requests
-import plotly.graph_objects as go
+from datetime import datetime, timedelta
 
 # ---------------------------
 # Streamlit page setup
 # ---------------------------
 st.set_page_config(page_title="Crypto Price Dashboard", layout="wide")
-st.title("📊 Crypto Price Dashboard")
+st.title("📊 Crypto Price Dashboard (CoinMarketCap)")
 
 # ---------------------------
 # Helper functions
 # ---------------------------
-def get_ticker(symbol: str):
-    """Fetch 24hr ticker stats from Binance public API."""
-    url = "https://api.binance.com/api/v3/ticker/24hr"
-    resp = requests.get(url, params={"symbol": symbol}).json()
-    if "symbol" in resp:
-        return resp
-    else:
-        return None
-
-def get_klines(symbol: str, interval: str, limit: int = 100):
-    """Fetch OHLCV candlestick data from Binance public API."""
-    url = "https://api.binance.com/api/v3/klines"
-    resp = requests.get(url, params={"symbol": symbol, "interval": interval, "limit": limit}).json()
-    if isinstance(resp, list):
-        return resp
-    else:
-        return None
-
-def get_cmc_data(symbol: str):
-    """Fetch market cap and supply data from CoinMarketCap."""
+def get_cmc_quote(symbol):
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
-    params = {"symbol": symbol.replace("USDT", "")}
-    headers = {"X-CMC_PRO_API_KEY": "d79fa2cb-f6e4-4ada-87b4-12d093df4d0d"} 
+    headers = {"X-CMC_PRO_API_KEY": st.secrets["CMC_API_KEY"]}
+    params = {"symbol": symbol}
     resp = requests.get(url, headers=headers, params=params).json()
-    return resp.get("data", {}).get(symbol.replace("USDT", ""), None)
+    return resp.get("data", {}).get(symbol, None)
+
+def get_cmc_ohlcv(symbol, interval="daily", days=30):
+    url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/ohlcv/historical"
+    headers = {"X-CMC_PRO_API_KEY": st.secrets["CMC_API_KEY"]}
+    end = datetime.utcnow()
+    start = end - timedelta(days=days)
+    params = {
+        "symbol": symbol,
+        "time_start": start.isoformat(),
+        "time_end": end.isoformat(),
+        "interval": interval
+    }
+    resp = requests.get(url, headers=headers, params=params).json()
+    return resp.get("data", {}).get("quotes", [])
 
 # ---------------------------
 # Sidebar
 # ---------------------------
 st.sidebar.header("Please filter here")
-symbols = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT"]
-selected = st.sidebar.selectbox("Select a crypto pair", symbols)
+symbols = ["BTC", "ETH", "BNB", "SOL", "XRP", "DOGE"]
+selected = st.sidebar.selectbox("Select a crypto", symbols)
+
+timeframe_dict = {"Hourly": "hourly", "Daily": "daily"}
+timeframe_label = st.sidebar.radio("Select timeframe", list(timeframe_dict.keys()))
+timeframe = timeframe_dict[timeframe_label]
 
 # ---------------------------
-# Fetch data safely
+# Fetch data
 # ---------------------------
-ticker = get_ticker(selected)
-if ticker is None:
-    st.error("Could not fetch ticker data from Binance.")
-    st.stop()
-
-coin_data = get_cmc_data(selected)
-if coin_data is None:
+quote = get_cmc_quote(selected)
+if not quote:
     st.error("Could not fetch data from CoinMarketCap.")
     st.stop()
 
-# ---------------------------
-# Timeframe mapping
-# ---------------------------
-timeframe_dict = {
-    "30 minutes": "30m",
-    "1 hour": "1h",
-    "4 hours": "4h",
-    "12 hours": "12h",
-    "1 day": "1d",
-    "1 week": "1w",
-    "1 month": "1M"
-}
-timeframe_list = list(timeframe_dict.keys())
-
-# ---------------------------
-# Metrics row
-# ---------------------------
-left_col, right_col = st.columns(2)
-with left_col:
-    st.metric(label="Coin Pair", value=ticker["symbol"])
-with right_col:
-    st.metric(label="Current Price (USD)", value=f"{float(ticker['lastPrice']):,.2f} USD")
-
-st.subheader(f"{ticker['symbol']} Price Chart")
-
-# ---------------------------
-# Timeframe selector
-# ---------------------------
-left_col2, right_col2 = st.columns(2)
-with right_col2:
-    timeframe_selected_label = st.selectbox(
-        "Select Timeframe",
-        options=timeframe_list,
-        index=0
-    )
-timeframe_selected = timeframe_dict[timeframe_selected_label]
-
-# ---------------------------
-# Klines data
-# ---------------------------
-klines = get_klines(selected, timeframe_selected)
-if klines is None:
-    st.error("Could not fetch candlestick data from Binance.")
+ohlcv = get_cmc_ohlcv(selected, interval=timeframe, days=30)
+if not ohlcv:
+    st.error("Could not fetch OHLCV data from CoinMarketCap.")
     st.stop()
 
-df = pd.DataFrame(klines, columns=[
-    "Open time", "Open", "High", "Low", "Close", "Volume",
-    "Close time", "Quote asset volume", "Number of trades",
-    "Taker buy base", "Taker buy quote", "Ignore"
-])
-df["Open time"] = pd.to_datetime(df["Open time"], unit="ms")
-df[["Open", "High", "Low", "Close"]] = df[["Open", "High", "Low", "Close"]].astype(float)
+# ---------------------------
+# Metrics
+# ---------------------------
+usd_data = quote["quote"]["USD"]
+left_col, middle_col, right_col = st.columns(3)
+with left_col:
+    st.metric("Symbol", selected)
+with middle_col:
+    st.metric("Current Price (USD)", f"{usd_data['price']:,.2f}")
+with right_col:
+    st.metric("Market Cap", f"${usd_data['market_cap']:,.0f}")
+
+# ---------------------------
+# Prepare OHLCV DataFrame
+# ---------------------------
+df = pd.DataFrame([{
+    "time": pd.to_datetime(item["time_open"]),
+    "open": float(item["quote"]["USD"]["open"]),
+    "high": float(item["quote"]["USD"]["high"]),
+    "low": float(item["quote"]["USD"]["low"]),
+    "close": float(item["quote"]["USD"]["close"]),
+    "volume": float(item["quote"]["USD"]["volume"])
+} for item in ohlcv])
 
 # ---------------------------
 # Charts
 # ---------------------------
-price_chart_data = df.groupby("Open time")["High"].sum()
-fig_by_line_chart = px.line(
-    price_chart_data,
-    x=price_chart_data.index,
-    y=price_chart_data.values,
-    labels={"x": "Time", "y": "Price (USD)"}
-)
-fig_by_line_chart.update_traces(
-    hovertemplate="Time: %{x}<br>High Sum: %{y}<extra></extra>"
-)
-
-fig_by_candle = go.Figure(data=[go.Candlestick(
-    x=df['Open time'],
-    open=df['Open'],
-    high=df['High'],
-    low=df['Low'],
-    close=df['Close']
+fig_line = px.line(df, x="time", y="close", title=f"{selected} Closing Price ({timeframe_label})")
+fig_candle = go.Figure(data=[go.Candlestick(
+    x=df["time"],
+    open=df["open"],
+    high=df["high"],
+    low=df["low"],
+    close=df["close"]
 )])
-fig_by_candle.update_layout(
-    title="Candlestick Chart",
-    xaxis_title="Date",
-    yaxis_title="Price",
-    template="plotly_dark"
-)
+fig_candle.update_layout(title=f"{selected} Candlestick Chart ({timeframe_label})")
 
-chart_dict = {
-    "Line Chart": fig_by_line_chart,
-    "Candles Chart": fig_by_candle,
-}
-with left_col2:
-    chart_selected_label = st.selectbox("Select Chart Type", options=list(chart_dict.keys()), index=0)
-chart_selected = chart_dict[chart_selected_label]
-st.plotly_chart(chart_selected, use_container_width=True)
+chart_dict = {"Line Chart": fig_line, "Candlestick Chart": fig_candle}
+chart_choice = st.selectbox("Select Chart Type", list(chart_dict.keys()))
+st.plotly_chart(chart_dict[chart_choice], use_container_width=True)
 
 # ---------------------------
-# Market cap, supply metrics
+# Extra: Returns chart
 # ---------------------------
-market_cap = coin_data["quote"]["USD"]["market_cap"]
-max_supply = coin_data["max_supply"]
-circulating_supply = coin_data["circulating_supply"]
-
-left_col3, middle_col3, right_col3 = st.columns(3)
-with left_col3:
-    st.metric(label="Market Cap", value=f"${market_cap:,.0f}")
-with middle_col3:
-    if max_supply is None:
-        st.metric(label="Max Supply", value=f"∞ {selected.replace('USDT','')}")
-    else:
-        st.metric(label="Max Supply", value=f"{max_supply:,.0f} {selected.replace('USDT','')}")
-with right_col3:
-    st.metric(label="Circulating Supply", value=f"{circulating_supply:,.0f} {selected.replace('USDT','')}")
-
-# ---------------------------
-# Extra charts: returns + closing price
-# ---------------------------
-left_col4, right_col4 = st.columns(2)
-with left_col4:
-    df["Returns"] = df["Close"].pct_change() * 100
-    fig_by_dailyreturn = px.bar(df, x="Open time", y="Returns", title="Daily % Returns")
-    st.plotly_chart(fig_by_dailyreturn, use_container_width=True)
-
-with right_col4:
-    fig_by_price = go.Figure()
-    fig_by_price.add_trace(go.Scatter(x=df['Open time'], y=df['Close'],
-                                      name="Closing Price", mode='lines+markers'))
-    fig_by_price.update_layout(
-        title="Closing Price Over Time",
-        xaxis_title="Time",
-        yaxis_title="Closing Price (USD)",
-        template="plotly_white"
-    )
-    st.plotly_chart(fig_by_price, use_container_width=True)
+df["Returns"] = df["close"].pct_change() * 100
+fig_returns = px.bar(df, x="time", y="Returns", title="Daily % Returns")
+st.plotly_chart(fig_returns, use_container_width=True)
