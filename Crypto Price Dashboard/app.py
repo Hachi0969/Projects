@@ -35,7 +35,7 @@ def get_cmc_data(symbol: str):
     """Fetch market cap and supply data from CoinMarketCap."""
     url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest"
     params = {"symbol": symbol.replace("USDT", "")}
-    headers = {"X-CMC_PRO_API_KEY": "d79fa2cb-f6e4-4ada-87b4-12d093df4d0d"}  # replace with your key
+    headers = {"X-CMC_PRO_API_KEY": "d79fa2cb-f6e4-4ada-87b4-12d093df4d0d"} 
     resp = requests.get(url, headers=headers, params=params).json()
     return resp.get("data", {}).get(symbol.replace("USDT", ""), None)
 
